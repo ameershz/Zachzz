@@ -34,7 +34,7 @@ jobs:
           if [ -d "app" ] && [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
             echo "Creating missing root gradle files..."
             echo "include ':app'" > settings.gradle.kts
-            echo "plugins { id('com.android.application') version '8.1.0' apply false; id('org.jetbrains.kotlin.android') version '1.9.0' apply false }" > build.gradle.kts
+            echo "plugins { id('com.android.application') version '9.1.1' apply false; id('org.jetbrains.kotlin.android') version '1.9.0' apply false }" > build.gradle.kts
           elif [ -d "كابتن-وصيانة" ]; then
             cd "كابتن-وصيانة"
           fi
@@ -42,7 +42,7 @@ jobs:
           if [ ! -f "gradlew" ]; then
             echo "Gradlew missing. Installing system gradle and generating wrapper..."
             sudo apt-get update && sudo apt-get install -y gradle
-            gradle wrapper --gradle-version 8.0
+            gradle wrapper --gradle-version 9.3.1
           fi
           
           chmod +x gradlew
