@@ -27,28 +27,48 @@ jobs:
             echo "Error: No zip file found!"
             exit 1
           fi
+
           unzip -o "$ZIP_FILE" -d extracted_project
-          
+
           cd extracted_project
-          
+
           if [ -d "app" ] && [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
             echo "Creating missing root gradle files..."
             echo "include ':app'" > settings.gradle.kts
-            echo "plugins { id('com.android.application') version '9.1.1' apply false; id('org.jetbrains.kotlin.android') version '1.9.0' apply false }" > build.gradle.kts
+            echo "plugins { id('com.android.application') version '9.1.1' apply false; id('org.jetbrains.kotlin.android') version '1.9.0' apply false" > build.gradle.kts
           elif [ -d "كابتن-وصيانة" ]; then
             cd "كابتن-وصيانة"
           fi
-          
+
           if [ ! -f "gradlew" ]; then
             echo "Gradlew missing. Installing system gradle and generating wrapper..."
             sudo apt-get update && sudo apt-get install -y gradle
             gradle wrapper --gradle-version 9.3.1
           fi
-          
+
           echo "=== Generating Debug Keystore ==="
-          keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "C=US, O=Android, CN=Android Debug"
-          
+          keytool -genkey -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "C=US, O=Android, CN=Android Debug"
+
+          echo "=== ACTUAL GITHUB APK SIGNING FINGERPRINT ==="
+          keytool -list -v \
+            -keystore debug.keystore \
+            -alias androiddebugkey \
+            -storepass android | grep -E "SHA1:|SHA256:"
+          echo "================================================"
+
           chmod +x gradlew
+
+          echo "=== Gradle Signing Report ==="
+          ./gradlew signingReport
+
           echo "=== Starting Build ==="
           ./gradlew assembleDebug
 
