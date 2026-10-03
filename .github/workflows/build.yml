@@ -72,26 +72,6 @@ jobs:
           echo "SUCCESS: Project root detected at $PROJECT_DIR"
           echo "=========================================================="
 
-      - name: Prepare Gradle Execution Tool
-        run: |
-          cd "$PROJECT_DIR"
-          if [ -f "gradlew" ]; then
-            chmod +x gradlew
-            echo "GRADLE_BIN=./gradlew" >> $GITHUB_ENV
-            echo "Using existing Gradle Wrapper: ./gradlew"
-          else
-            echo "Gradle wrapper not found in archive. Generating wrapper for Gradle 9.3.1..."
-            gradle wrapper --gradle-version 9.3.1 || true
-            if [ -f "gradlew" ]; then
-              chmod +x gradlew
-              echo "GRADLE_BIN=./gradlew" >> $GITHUB_ENV
-              echo "Using generated Gradle Wrapper: ./gradlew"
-            else
-              echo "GRADLE_BIN=gradle" >> $GITHUB_ENV
-              echo "Using system-installed Gradle: gradle"
-            fi
-          fi
-
       - name: Enforce Fixed Keystore from Base64
         run: |
           echo "=========================================================="
@@ -110,12 +90,14 @@ jobs:
           fi
 
           echo "Discovered keystore source: $KEYSTORE_B64"
-          echo "Decoding debug.keystore into project root ($PROJECT_DIR/debug.keystore)..."
+          echo "Decoding debug.keystore..."
           tr -d '\r\n' < "$KEYSTORE_B64" | base64 -d > "$PROJECT_DIR/debug.keystore"
 
+          mkdir -p "$PROJECT_DIR/app"
           mkdir -p ~/.android
-          cp "$PROJECT_DIR/debug.keystore" ~/.android/debug.keystore
+          cp "$PROJECT_DIR/debug.keystore" "$PROJECT_DIR/app/debug.keystore"
           cp "$PROJECT_DIR/debug.keystore" ./debug.keystore 2>/dev/null || true
+          cp "$PROJECT_DIR/debug.keystore" ~/.android/debug.keystore
 
           if [ ! -f "$PROJECT_DIR/debug.keystore" ]; then
             echo "ERROR: Failed to write $PROJECT_DIR/debug.keystore"
@@ -138,6 +120,26 @@ jobs:
 
           echo "SUCCESS: Keystore SHA-1 verified."
           echo "=========================================================="
+
+      - name: Prepare Gradle Execution Tool
+        run: |
+          cd "$PROJECT_DIR"
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            echo "GRADLE_BIN=./gradlew" >> $GITHUB_ENV
+            echo "Using existing Gradle Wrapper: ./gradlew"
+          else
+            echo "Gradle wrapper not found in archive. Generating wrapper for Gradle 9.3.1..."
+            gradle wrapper --gradle-version 9.3.1 || true
+            if [ -f "gradlew" ]; then
+              chmod +x gradlew
+              echo "GRADLE_BIN=./gradlew" >> $GITHUB_ENV
+              echo "Using generated Gradle Wrapper: ./gradlew"
+            else
+              echo "GRADLE_BIN=gradle" >> $GITHUB_ENV
+              echo "Using system-installed Gradle: gradle"
+            fi
+          fi
 
       - name: Build Debug APK
         run: |
