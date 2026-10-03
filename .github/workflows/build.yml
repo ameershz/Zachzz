@@ -105,10 +105,3 @@ jobs:
         with:
           name: CaptainApp-Debug
           path: 'extracted_project/**/build/outputs/apk/debug/*.apk'
-
-بس انتبه: هذا الـWorkflow يفترض أن الملف "debug.keystore.base64" موجود داخل الـZIP، مثل ما ظهر عندنا سابقًا.
-
-بعد ما تستبدله، لا تشغل الـBuild من عندك هسه إذا ما متأكد أن الملف موجود.
-إذا موجود، شغّل الـAction.
-
-والمهم جدًا: الـBuild الجديد راح يفشل تلقائيًا إذا الـAPK النهائي ما طلع بتوقيع F8. يعني ما راح نرجع ندور ورا بصمات جديدة.
