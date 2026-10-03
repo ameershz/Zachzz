@@ -105,16 +105,15 @@ jobs:
           fi
 
           EXPECTED_SHA1="F8:3A:F8:85:B9:8E:08:DB:BA:D6:61:19:E5:CD:E0:C7:58:77:19:ED"
-          EXTRACTED_SHA1=$(keytool -list -v -keystore "$PROJECT_DIR/debug.keystore" -alias androiddebugkey -storepass android | grep -i "SHA1:" | head -n 1 | cut -d':' -f2- | tr -d ' ' | tr 'a-z' 'A-Z')
+          KS_LINE=$(keytool -list -v -keystore "$PROJECT_DIR/debug.keystore" -alias androiddebugkey -storepass android | grep -iE "SHA-?1:" | head -n 1)
+          CLEAN_EXTRACTED=$(echo "$KS_LINE" | grep -oE '([0-9a-fA-F]{2}:){19}[0-9a-fA-F]{2}|[0-9a-fA-F]{40}' | head -n 1 | tr -d ' :' | tr 'a-z' 'A-Z')
+          CLEAN_EXPECTED=$(echo "$EXPECTED_SHA1" | tr -d ' :' | tr 'a-z' 'A-Z')
 
-          CLEAN_EXTRACTED=$(echo "$EXTRACTED_SHA1" | tr -d ' :')
-          CLEAN_EXPECTED=$(echo "$EXPECTED_SHA1" | tr -d ' :')
-
-          echo "Keystore SHA-1: $EXTRACTED_SHA1"
-          echo "Expected SHA-1: $EXPECTED_SHA1"
+          echo "Keystore SHA-1: $CLEAN_EXTRACTED"
+          echo "Expected SHA-1: $CLEAN_EXPECTED"
 
           if [ "$CLEAN_EXTRACTED" != "$CLEAN_EXPECTED" ]; then
-            echo "ERROR: Keystore SHA-1 mismatch! Expected $EXPECTED_SHA1 but got $EXTRACTED_SHA1"
+            echo "ERROR: Keystore SHA-1 mismatch! Expected $CLEAN_EXPECTED but got $CLEAN_EXTRACTED"
             exit 1
           fi
 
@@ -167,23 +166,28 @@ jobs:
           echo "Found APK at: $APK_PATH"
           echo "FINAL_APK_PATH=$APK_PATH" >> $GITHUB_ENV
 
+          RAW_CERTS=""
           APKSIGNER_BIN=$(find "$ANDROID_HOME/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$APKSIGNER_BIN" ] && [ -x "$APKSIGNER_BIN" ]; then
             echo "Inspecting APK certificate with apksigner: $APKSIGNER_BIN"
-            RAW_SHA1=$("$APKSIGNER_BIN" verify --print-certs "$APK_PATH" | grep -i "SHA-1 digest:" | head -n 1 | cut -d':' -f2- | tr -d ' ' | tr 'a-z' 'A-Z')
-          else
-            echo "apksigner binary not directly accessible, inspecting APK with keytool..."
-            RAW_SHA1=$(keytool -printcert -jarfile "$APK_PATH" | grep -i "SHA1:" | head -n 1 | cut -d':' -f2- | tr -d ' ' | tr 'a-z' 'A-Z')
+            RAW_CERTS=$("$APKSIGNER_BIN" verify --print-certs "$APK_PATH" 2>/dev/null || true)
           fi
 
+          if [ -z "$RAW_CERTS" ]; then
+            echo "apksigner not available or failed, inspecting APK with keytool..."
+            RAW_CERTS=$(keytool -printcert -jarfile "$APK_PATH" 2>/dev/null || true)
+          fi
+
+          SHA1_LINE=$(echo "$RAW_CERTS" | grep -iE "SHA-?1" | head -n 1)
+          CLEAN_APK_SHA1=$(echo "$SHA1_LINE" | grep -oE '([0-9a-fA-F]{2}:){19}[0-9a-fA-F]{2}|[0-9a-fA-F]{40}' | head -n 1 | tr -d ' :' | tr 'a-z' 'A-Z')
+
           EXPECTED_SHA1="F8:3A:F8:85:B9:8E:08:DB:BA:D6:61:19:E5:CD:E0:C7:58:77:19:ED"
-          CLEAN_APK_SHA1=$(echo "$RAW_SHA1" | tr -d ' :')
-          CLEAN_EXPECTED=$(echo "$EXPECTED_SHA1" | tr -d ' :')
+          CLEAN_EXPECTED=$(echo "$EXPECTED_SHA1" | tr -d ' :' | tr 'a-z' 'A-Z')
 
-          echo "APK Certificate SHA-1: $RAW_SHA1"
-          echo "Expected SHA-1:        $EXPECTED_SHA1"
+          echo "APK Certificate SHA-1: $CLEAN_APK_SHA1"
+          echo "Expected SHA-1:        $CLEAN_EXPECTED"
 
-          if [ "$CLEAN_APK_SHA1" != "$CLEAN_EXPECTED" ]; then
+          if [ -z "$CLEAN_APK_SHA1" ] || [ "$CLEAN_APK_SHA1" != "$CLEAN_EXPECTED" ]; then
             echo "CRITICAL ERROR: APK SHA-1 ($CLEAN_APK_SHA1) does not match expected ($CLEAN_EXPECTED)!"
             exit 1
           fi
