@@ -22,7 +22,9 @@ jobs:
       - name: Extract and Fix Project Structure
         run: |
           echo "=== Extracting ZIP ==="
+
           ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+
           if [ -z "$ZIP_FILE" ]; then
             echo "Error: No zip file found!"
             exit 1
@@ -42,29 +44,29 @@ jobs:
 
           if [ ! -f "gradlew" ]; then
             echo "Gradlew missing. Installing system gradle and generating wrapper..."
-            sudo apt-get update && sudo apt-get install -y gradle
+            sudo apt-get update
+            sudo apt-get install -y gradle
             gradle wrapper --gradle-version 9.3.1
           fi
 
-          echo "=== Generating Debug Keystore ==="
-          keytool -genkey -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "C=US, O=Android, CN=Android Debug"
+          chmod +x gradlew
 
-          echo "=== ACTUAL GITHUB APK SIGNING FINGERPRINT ==="
+          echo "=== Checking Stable Firebase Signing Keystore ==="
+
+          if [ ! -f "debug.keystore.base64" ]; then
+            echo "ERROR: debug.keystore.base64 is missing!"
+            exit 1
+          fi
+
+          tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
+
+          echo "=== Stable Keystore Fingerprint ==="
+
           keytool -list -v \
             -keystore debug.keystore \
             -alias androiddebugkey \
-            -storepass android | grep -E "SHA1:|SHA256:"
-          echo "================================================"
-
-          chmod +x gradlew
+            -storepass android \
+            -keypass android | grep -E "SHA1:|SHA256:"
 
           echo "=== Gradle Signing Report ==="
           ./gradlew signingReport
@@ -72,8 +74,41 @@ jobs:
           echo "=== Starting Build ==="
           ./gradlew assembleDebug
 
+      - name: Verify Final APK Certificate
+        run: |
+          APK=$(find extracted_project -path "*/build/outputs/apk/debug/*.apk" | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK not found!"
+            exit 1
+          fi
+
+          echo "=== FINAL APK CERTIFICATE ==="
+
+          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$APK"
+
+          echo "=== Checking expected SHA-1 ==="
+
+          CERTS=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$APK")
+
+          echo "$CERTS" | grep -qi "F8:3A:F8:85:B9:8E:08:DB:BA:D6:61:19:E5:CD:E0:C7:58:77:19:ED"
+
+          if [ $? -ne 0 ]; then
+            echo "ERROR: FINAL APK DOES NOT HAVE EXPECTED F8 SHA-1!"
+            exit 1
+          fi
+
+          echo "SUCCESS: FINAL APK SHA-1 IS F8:3A..."
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CaptainApp-Debug
-          path: '**/build/outputs/apk/debug/*.apk'
+          path: 'extracted_project/**/build/outputs/apk/debug/*.apk'
+
+بس انتبه: هذا الـWorkflow يفترض أن الملف "debug.keystore.base64" موجود داخل الـZIP، مثل ما ظهر عندنا سابقًا.
+
+بعد ما تستبدله، لا تشغل الـBuild من عندك هسه إذا ما متأكد أن الملف موجود.
+إذا موجود، شغّل الـAction.
+
+والمهم جدًا: الـBuild الجديد راح يفشل تلقائيًا إذا الـAPK النهائي ما طلع بتوقيع F8. يعني ما راح نرجع ندور ورا بصمات جديدة.
