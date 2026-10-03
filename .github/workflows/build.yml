@@ -1,12 +1,15 @@
-name: Build Android APK
+name: Build Android Debug APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
+    name: Build & Verify Debug APK
     runs-on: ubuntu-latest
 
     steps:
@@ -18,90 +21,177 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
-      - name: Extract and Fix Project Structure
+      - name: Locate and Extract Project Archive
         run: |
-          echo "=== Extracting ZIP ==="
-
-          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-
+          echo "=========================================================="
+          echo "Searching for project archive (ZIP) in repository..."
+          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" 2>/dev/null | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "Error: No zip file found!"
+            ZIP_FILE=$(find . -type f -name "*.zip" 2>/dev/null | head -n 1)
+          fi
+
+          PROJECT_DIR=""
+
+          if [ -n "$ZIP_FILE" ] && [ -f "$ZIP_FILE" ]; then
+            echo "Found project archive: $ZIP_FILE"
+            EXTRACT_PATH="/tmp/extracted_project"
+            rm -rf "$EXTRACT_PATH"
+            mkdir -p "$EXTRACT_PATH"
+            echo "Extracting archive to $EXTRACT_PATH..."
+            unzip -q -o "$ZIP_FILE" -d "$EXTRACT_PATH"
+
+            SETTINGS_PATH=$(find "$EXTRACT_PATH" -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null | head -n 1)
+            if [ -n "$SETTINGS_PATH" ]; then
+              PROJECT_DIR=$(dirname "$SETTINGS_PATH")
+            else
+              BUILD_PATH=$(find "$EXTRACT_PATH" -type f \( -name "build.gradle.kts" -o -name "build.gradle" \) 2>/dev/null | head -n 1)
+              if [ -n "$BUILD_PATH" ]; then
+                PROJECT_DIR=$(dirname "$BUILD_PATH")
+              fi
+            fi
+          else
+            echo "No ZIP archive found. Inspecting repository root directly..."
+            SETTINGS_PATH=$(find . -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \) 2>/dev/null | head -n 1)
+            if [ -n "$SETTINGS_PATH" ]; then
+              PROJECT_DIR=$(dirname "$SETTINGS_PATH")
+            fi
+          fi
+
+          if [ -z "$PROJECT_DIR" ] || [ ! -d "$PROJECT_DIR" ]; then
+            echo "ERROR: Could not locate a valid Gradle project containing settings.gradle(.kts)!"
             exit 1
           fi
 
-          unzip -o "$ZIP_FILE" -d extracted_project
-
-          cd extracted_project
-
-          if [ -d "app" ] && [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            echo "Creating missing root gradle files..."
-            echo "include ':app'" > settings.gradle.kts
-            echo "plugins { id('com.android.application') version '9.1.1' apply false; id('org.jetbrains.kotlin.android') version '1.9.0' apply false" > build.gradle.kts
-          elif [ -d "كابتن-وصيانة" ]; then
-            cd "كابتن-وصيانة"
-          fi
-
-          if [ ! -f "gradlew" ]; then
-            echo "Gradlew missing. Installing system gradle and generating wrapper..."
-            sudo apt-get update
-            sudo apt-get install -y gradle
-            gradle wrapper --gradle-version 9.3.1
-          fi
-
-          chmod +x gradlew
-
-          echo "=== Checking Stable Firebase Signing Keystore ==="
-
-          if [ ! -f "debug.keystore.base64" ]; then
-            echo "ERROR: debug.keystore.base64 is missing!"
+          if [ ! -d "$PROJECT_DIR/app" ]; then
+            echo "ERROR: 'app' module not found in detected project directory: $PROJECT_DIR"
             exit 1
           fi
 
-          tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
+          echo "SUCCESS: Project root detected at $PROJECT_DIR"
+          echo "=========================================================="
 
-          echo "=== Stable Keystore Fingerprint ==="
-
-          keytool -list -v \
-            -keystore debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android | grep -E "SHA1:|SHA256:"
-
-          echo "=== Gradle Signing Report ==="
-          ./gradlew signingReport
-
-          echo "=== Starting Build ==="
-          ./gradlew assembleDebug
-
-      - name: Verify Final APK Certificate
+      - name: Prepare Gradle Execution Tool
         run: |
-          APK=$(find extracted_project -path "*/build/outputs/apk/debug/*.apk" | head -n 1)
+          cd "$PROJECT_DIR"
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+            echo "GRADLE_BIN=./gradlew" >> $GITHUB_ENV
+            echo "Using existing Gradle Wrapper: ./gradlew"
+          else
+            echo "Gradle wrapper not found in archive. Generating wrapper for Gradle 9.3.1..."
+            gradle wrapper --gradle-version 9.3.1 || true
+            if [ -f "gradlew" ]; then
+              chmod +x gradlew
+              echo "GRADLE_BIN=./gradlew" >> $GITHUB_ENV
+              echo "Using generated Gradle Wrapper: ./gradlew"
+            else
+              echo "GRADLE_BIN=gradle" >> $GITHUB_ENV
+              echo "Using system-installed Gradle: gradle"
+            fi
+          fi
 
-          if [ -z "$APK" ]; then
-            echo "ERROR: APK not found!"
+      - name: Enforce Fixed Keystore from Base64
+        run: |
+          echo "=========================================================="
+          echo "Locating debug.keystore.base64 dynamically..."
+          KEYSTORE_B64=$(find "$PROJECT_DIR" -type f -name "debug.keystore.base64" 2>/dev/null | head -n 1)
+          if [ -z "$KEYSTORE_B64" ] || [ ! -f "$KEYSTORE_B64" ]; then
+            KEYSTORE_B64=$(find . -type f -name "debug.keystore.base64" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$KEYSTORE_B64" ] || [ ! -f "$KEYSTORE_B64" ]; then
+            KEYSTORE_B64=$(find /tmp -type f -name "debug.keystore.base64" 2>/dev/null | head -n 1)
+          fi
+
+          if [ -z "$KEYSTORE_B64" ] || [ ! -f "$KEYSTORE_B64" ]; then
+            echo "ERROR: debug.keystore.base64 was not found in the project or archive!"
             exit 1
           fi
 
-          echo "=== FINAL APK CERTIFICATE ==="
+          echo "Discovered keystore source: $KEYSTORE_B64"
+          echo "Decoding debug.keystore into project root ($PROJECT_DIR/debug.keystore)..."
+          tr -d '\r\n' < "$KEYSTORE_B64" | base64 -d > "$PROJECT_DIR/debug.keystore"
 
-          $ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$APK"
+          mkdir -p ~/.android
+          cp "$PROJECT_DIR/debug.keystore" ~/.android/debug.keystore
+          cp "$PROJECT_DIR/debug.keystore" ./debug.keystore 2>/dev/null || true
 
-          echo "=== Checking expected SHA-1 ==="
-
-          CERTS=$($ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs "$APK")
-
-          echo "$CERTS" | grep -qi "F8:3A:F8:85:B9:8E:08:DB:BA:D6:61:19:E5:CD:E0:C7:58:77:19:ED"
-
-          if [ $? -ne 0 ]; then
-            echo "ERROR: FINAL APK DOES NOT HAVE EXPECTED F8 SHA-1!"
+          if [ ! -f "$PROJECT_DIR/debug.keystore" ]; then
+            echo "ERROR: Failed to write $PROJECT_DIR/debug.keystore"
             exit 1
           fi
 
-          echo "SUCCESS: FINAL APK SHA-1 IS F8:3A..."
+          EXPECTED_SHA1="F8:3A:F8:85:B9:8E:08:DB:BA:D6:61:19:E5:CD:E0:C7:58:77:19:ED"
+          EXTRACTED_SHA1=$(keytool -list -v -keystore "$PROJECT_DIR/debug.keystore" -alias androiddebugkey -storepass android | grep -i "SHA1:" | head -n 1 | cut -d':' -f2- | tr -d ' ' | tr 'a-z' 'A-Z')
 
-      - name: Upload APK Artifact
+          CLEAN_EXTRACTED=$(echo "$EXTRACTED_SHA1" | tr -d ' :')
+          CLEAN_EXPECTED=$(echo "$EXPECTED_SHA1" | tr -d ' :')
+
+          echo "Keystore SHA-1: $EXTRACTED_SHA1"
+          echo "Expected SHA-1: $EXPECTED_SHA1"
+
+          if [ "$CLEAN_EXTRACTED" != "$CLEAN_EXPECTED" ]; then
+            echo "ERROR: Keystore SHA-1 mismatch! Expected $EXPECTED_SHA1 but got $EXTRACTED_SHA1"
+            exit 1
+          fi
+
+          echo "SUCCESS: Keystore SHA-1 verified."
+          echo "=========================================================="
+
+      - name: Build Debug APK
+        run: |
+          echo "Building Debug APK in $PROJECT_DIR using $GRADLE_BIN..."
+          cd "$PROJECT_DIR"
+          $GRADLE_BIN :app:assembleDebug --stacktrace
+
+      - name: Verify APK Signature with apksigner
+        run: |
+          echo "=========================================================="
+          echo "Locating built Debug APK..."
+          APK_PATH=$(find "$PROJECT_DIR/app/build/outputs/apk/debug" -type f -name "*.apk" 2>/dev/null | head -n 1)
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            APK_PATH=$(find "$PROJECT_DIR" -type f -name "*debug*.apk" 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            APK_PATH=$(find . -type f -name "*debug*.apk" 2>/dev/null | head -n 1)
+          fi
+
+          if [ -z "$APK_PATH" ] || [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: Could not find built APK file!"
+            exit 1
+          fi
+
+          echo "Found APK at: $APK_PATH"
+          echo "FINAL_APK_PATH=$APK_PATH" >> $GITHUB_ENV
+
+          APKSIGNER_BIN=$(find "$ANDROID_HOME/build-tools" -name apksigner 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$APKSIGNER_BIN" ] && [ -x "$APKSIGNER_BIN" ]; then
+            echo "Inspecting APK certificate with apksigner: $APKSIGNER_BIN"
+            RAW_SHA1=$("$APKSIGNER_BIN" verify --print-certs "$APK_PATH" | grep -i "SHA-1 digest:" | head -n 1 | cut -d':' -f2- | tr -d ' ' | tr 'a-z' 'A-Z')
+          else
+            echo "apksigner binary not directly accessible, inspecting APK with keytool..."
+            RAW_SHA1=$(keytool -printcert -jarfile "$APK_PATH" | grep -i "SHA1:" | head -n 1 | cut -d':' -f2- | tr -d ' ' | tr 'a-z' 'A-Z')
+          fi
+
+          EXPECTED_SHA1="F8:3A:F8:85:B9:8E:08:DB:BA:D6:61:19:E5:CD:E0:C7:58:77:19:ED"
+          CLEAN_APK_SHA1=$(echo "$RAW_SHA1" | tr -d ' :')
+          CLEAN_EXPECTED=$(echo "$EXPECTED_SHA1" | tr -d ' :')
+
+          echo "APK Certificate SHA-1: $RAW_SHA1"
+          echo "Expected SHA-1:        $EXPECTED_SHA1"
+
+          if [ "$CLEAN_APK_SHA1" != "$CLEAN_EXPECTED" ]; then
+            echo "CRITICAL ERROR: APK SHA-1 ($CLEAN_APK_SHA1) does not match expected ($CLEAN_EXPECTED)!"
+            exit 1
+          fi
+
+          echo "SUCCESS: Final APK SHA-1 matches expected fingerprint perfectly!"
+          echo "=========================================================="
+
+      - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CaptainApp-Debug
-          path: 'extracted_project/**/build/outputs/apk/debug/*.apk'
+          path: ${{ env.FINAL_APK_PATH }}
