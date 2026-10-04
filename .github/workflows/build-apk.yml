@@ -1,0 +1,69 @@
+name: Build Android APK
+
+on:
+workflow_dispatch:
+push:
+paths:
+- 'the-city.zip'
+- '.github/workflows/build-apk.yml'
+
+jobs:
+build:
+runs-on: ubuntu-latest
+
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Setup Java
+    uses: actions/setup-java@v4
+    with:
+      distribution: temurin
+      java-version: '17'
+
+  - name: Extract Android project
+    run: |
+      mkdir -p project
+      unzip -q the-city.zip -d project
+
+      echo "Extracted files:"
+      find project -maxdepth 4 -type f | head -100
+
+  - name: Find Gradle project
+    run: |
+      GRADLEW=$(find project -type f -name gradlew | head -1)
+
+      if [ -z "$GRADLEW" ]; then
+        echo "ERROR: gradlew was not found inside the ZIP."
+        echo "The ZIP does not appear to contain a Gradle Android project."
+        exit 1
+      fi
+
+      PROJECT_DIR=$(dirname "$GRADLEW")
+
+      echo "GRADLEW=$GRADLEW" >> "$GITHUB_ENV"
+      echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      echo "Gradle wrapper: $GRADLEW"
+      echo "Project directory: $PROJECT_DIR"
+
+  - name: Make Gradle executable
+    run: chmod +x "$GRADLEW"
+
+  - name: Build Debug APK
+    working-directory: ${{ env.PROJECT_DIR }}
+    run: ./gradlew assembleDebug --stacktrace
+
+  - name: Find APK
+    run: |
+      echo "Searching for APK files..."
+      find "$PROJECT_DIR" -type f -name "*.apk" -print
+
+  - name: Upload APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: The-City-APK
+      path: |
+        ${{ env.PROJECT_DIR }}/**/build/outputs/apk/**/*.apk
+      if-no-files-found: error
+      retention-days: 30
