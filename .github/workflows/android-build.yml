@@ -16,9 +16,19 @@ jobs:
         uses: actions/checkout@v4
 
 
-      - name: Extract ZIP project
+      - name: Find and Extract ZIP project
         run: |
-          unzip -o ameer-ai-assistant.zip -d project
+          ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found"
+            ls -la
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP_FILE"
+
+          unzip -o "$ZIP_FILE" -d project
 
 
       - name: Setup Java
