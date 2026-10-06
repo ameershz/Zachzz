@@ -19,8 +19,8 @@ jobs:
       - name: Extract ZIP project
         run: |
           unzip -o ameer-ai-assistant.zip -d project
-          echo "ZIP extracted successfully"
-          find project -maxdepth 3 -name gradlew
+          echo "Project extracted"
+          ls -la project
 
 
       - name: Setup Java 17
@@ -34,26 +34,22 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
 
-      - name: Find and Build APK
+      - name: Prepare Gradle Wrapper
         run: |
+          cd project
 
-          GRADLE_FILE=$(find project -name gradlew | head -1)
+          echo "Creating missing Gradle Wrapper..."
 
-          if [ -z "$GRADLE_FILE" ]; then
-            echo "ERROR: gradlew not found inside ZIP"
-            echo "Files inside project:"
-            find project -maxdepth 3 -type f | head -100
-            exit 1
-          fi
-
-          echo "Gradle found at:"
-          echo "$GRADLE_FILE"
-
-          PROJECT_DIR=$(dirname "$GRADLE_FILE")
-
-          cd "$PROJECT_DIR"
+          gradle wrapper --gradle-version 9.3.1
 
           chmod +x gradlew
+
+          echo "Gradle Wrapper ready"
+
+
+      - name: Build APK
+        run: |
+          cd project
 
           ./gradlew assembleDebug
 
@@ -63,4 +59,4 @@ jobs:
         with:
           name: Ameer-AI-APK
           path: |
-            project/**/app/build/outputs/apk/debug/*.apk
+            project/app/build/outputs/apk/debug/*.apk
